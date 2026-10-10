@@ -7,6 +7,7 @@ import {
   ADMIN_SESSION_MAX_AGE_SECONDS,
   createSessionToken,
 
+  getAdminSession,
   isAuthorizedAdminSession,
 } from "../lib/admin-auth.js";
 
@@ -78,9 +79,30 @@ router.post("/logout", (_req, res) => {
 });
 
 router.get("/session", asyncRoute(async (req, res) => {
-  res.set("Cache-Control", "no-store");
-  const valid = await isAuthorizedAdminSession(req.cookies?.[ADMIN_SESSION_COOKIE]);
-  res.status(valid ? 200 : 401).json({ authenticated: valid });
+  res.set("Cache-Control", "private, no-store");
+  const session = await getAdminSession(req.cookies?.[ADMIN_SESSION_COOKIE]);
+  res.status(session.status === "authorized" ? 200 : session.status === "forbidden" ? 403 : 401)
+    .json({ authenticated: session.status === "authorized" });
+}));
+
+// Individual protected endpoint: returns only the caller's private DB-backed identity.
+router.get("/me", asyncRoute(async (req, res) => {
+  res.set("Cache-Control", "private, no-store");
+  const session = await getAdminSession(req.cookies?.[ADMIN_SESSION_COOKIE]);
+  if (session.status === "unauthenticated") {
+    res.status(401).json({ error: "Unauthorized. Please log in again." });
+    return;
+  }
+  if (session.status === "forbidden") {
+    res.status(403).json({ error: "Forbidden. Admin access required." });
+    return;
+  }
+  res.status(200).json({
+    id: session.userId,
+    email: session.email,
+    role: "admin",
+    adminSince: session.createdAt,
+  });
 }));
 
 export default router;

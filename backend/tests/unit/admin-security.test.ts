@@ -8,6 +8,25 @@ vi.mock("../../src/lib/content-store.js", async (original) => {
 });
 vi.mock("../../src/lib/storage.js", () => ({ LOCAL_UPLOAD_DIR: "/nonexistent-unit-test-uploads", uploadImage: vi.fn() }));
 
+const authDb = vi.hoisted(() => ({
+  getUserById: vi.fn(),
+  maybeSingle: vi.fn(),
+  signInWithPassword: vi.fn(),
+  signOut: vi.fn(),
+}));
+vi.mock("../../src/lib/supabase.js", () => ({
+  STORAGE_BUCKET: "test-images",
+  isSupabaseConfigured: () => true,
+  getSupabase: () => ({
+    auth: { admin: { getUserById: authDb.getUserById } },
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: authDb.maybeSingle }) }) }),
+  }),
+  createSupabaseAuthClient: () => ({
+    auth: { signInWithPassword: authDb.signInWithPassword, signOut: authDb.signOut },
+  }),
+}));
+
+
 import { createApp } from "../../src/app.js";
 import * as store from "../../src/lib/content-store.js";
 import { uploadImage } from "../../src/lib/storage.js";
@@ -27,7 +46,20 @@ const endpointCases = [
 ] as const;
 
 beforeAll(async () => {
-  const response = await request(app).post("/api/admin/login").send({ password: process.env.ADMIN_PASSWORD });
+  authDb.getUserById.mockResolvedValue({
+    data: { user: { email: "testadmin@example.test" } }, error: null,
+  });
+  authDb.maybeSingle.mockResolvedValue({
+    data: { email: "testadmin@example.test", created_at: "2026-10-01T00:00:00Z" }, error: null,
+  });
+  authDb.signInWithPassword.mockImplementation(async ({ password }: { password: string }) =>
+    password === "test-password"
+      ? { data: { user: { id: "11111111-1111-4111-8111-111111111111", email: "testadmin@example.test" } }, error: null }
+      : { data: { user: null }, error: { status: 400 } },
+  );
+  authDb.signOut.mockResolvedValue({ error: null });
+  const response = await request(app).post("/api/admin/login")
+    .send({ email: "testadmin@example.test", password: "test-password" });
   expect(response.status).toBe(200);
   cookie = response.headers["set-cookie"][0].split(";")[0];
 });
@@ -43,12 +75,12 @@ beforeEach(() => {
 
 describe("Existing admin login and server session enforcement", () => {
   it("rejects an incorrect password and does not issue a session", async () => {
-    const response = await request(app).post("/api/admin/login").send({ password: "wrong-test-password" });
+    const response = await request(app).post("/api/admin/login").send({ email: "testadmin@example.test", password: "wrong-test-password" });
     expect(response.status).toBe(401);
     expect(response.headers["set-cookie"]).toBeUndefined();
   });
   it("issues the existing HttpOnly cookie and allows the session endpoint", async () => {
-    const response = await request(app).post("/api/admin/login").send({ password: process.env.ADMIN_PASSWORD });
+    const response = await request(app).post("/api/admin/login").send({ email: "testadmin@example.test", password: "test-password" });
     expect(response.headers["set-cookie"][0]).toContain("HttpOnly");
     expect((await request(app).get("/api/admin/session").set("Cookie", cookie)).body.authenticated).toBe(true);
   });

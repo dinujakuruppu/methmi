@@ -1,0 +1,20 @@
+name: ICA 5 - Dinuja auth and security
+
+on:
+  push:
+    branches: [dinuja-dev]
+  pull_request:
+    branches: [Develop, develop]
+
+jobs:
+  backend-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck -w backend
+      - run: npm run test -w backend
